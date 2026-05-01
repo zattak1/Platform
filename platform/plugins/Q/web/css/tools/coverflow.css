@@ -16,19 +16,13 @@
 
 .Q_coverflow_tool .Q_coverflow_caption {
 	position: absolute;
-	height: 30px;
-	line-height: 50px;
+	left: 50%;
+    transform: translateX(-50%);
 	font-size: 40px;
-	width: 100%;
+	width: 50%;
 	text-align: center;
 	bottom: 20px;
-	vertical-align: middle;
 	font-weight: bold;
-	padding: 2px;
-}
-
-.Q_notMobile .Q_coverflow_tool .Q_coverflow_caption {
-	padding: 10px;
 }
 
 .Q_mobile .Q_coverflow_tool .Q_coverflow_caption {

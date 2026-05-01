@@ -62,18 +62,25 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 	 * @property isRTL
 	 * @type Boolean
 	 */
-	var isRTL = getComputedStyle(tool.element).direction === 'rtl';
+	var isRTL = getComputedStyle(tool.element).direction === "rtl";
 
 	if (!state.dontSnapScroll) {
-		tool.element.addClass('Q_coverflow_snapping');
+		tool.element.addClass("Q_coverflow_snapping");
 	}
 
-	var covers = tool.element.querySelector('.Q_coverflow_covers');
+	var covers = tool.element.querySelector(".Q_coverflow_covers");
 	if (!covers) {
-		covers = Q.element('ul', { "class": "Q_coverflow_covers" });
+		covers = Q.element("ul", { class: "Q_coverflow_covers" });
 		tool.element.appendChild(covers);
 	}
-	tool._covers = covers;
+	
+	var updateBounds = function () {
+		covers._boundingClientRect = covers.getBoundingClientRect();
+	};
+	Q.onLayout(covers).set(updateBounds, tool);
+	updateBounds();
+
+	tool._covers = covers;	
 
 	tool._buildCovers();
 
@@ -85,12 +92,12 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 		if (state.dontSnapScroll) return;
 		clearTimeout(snapTimer);
 		snapTimer = setTimeout(function () {
-			tool.element.addClass('Q_coverflow_snapping');
+			tool.element.addClass("Q_coverflow_snapping");
 		}, 120);
 	}
 
 	function disableSnapNow() {
-		tool.element.removeClass('Q_coverflow_snapping');
+		tool.element.removeClass("Q_coverflow_snapping");
 		clearTimeout(snapTimer);
 	}
 
@@ -99,13 +106,26 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 
 	// ---- caption ----
 
-	var caption = tool.element.querySelector('.Q_coverflow_caption');
+	var caption = tool.element.querySelector(".Q_coverflow_caption");
 	if (!caption) {
-		caption = Q.element('div', { "class": "Q_coverflow_caption" });
+		caption = Q.element("div", { class: "Q_coverflow_caption" });
 		tool.element.appendChild(caption);
-		$(caption).plugin('Q/textfill');
+		$(caption).plugin("Q/textfill");
 	}
 	tool._caption = caption;
+
+		// Capturing phase (true) ensures this runs before any child's listener
+	tool.element.addEventListener("click", (event) => {
+		let el = document.elementFromPoint(event.clientX, event.clientY);
+
+		if (el?.tagName.toLowerCase() === "li") {
+			el = el.querySelector(":scope > img") || el;
+		}
+
+		if (el?.tagName.toLowerCase() === "img") {
+			Q.handle(state.onInvoke, tool, [el]);
+		}
+	}, true); // <-- capturing phase
 
 	/**
 	 * Updates caption from the li at the visual centre.
@@ -114,24 +134,21 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 	 * @private
 	 */
 	var updateCaption = Q.throttle(function () {
-		var rect = covers.getBoundingClientRect();
-		var element = document.elementFromPoint(
-			rect.left + rect.width / 2,
-			rect.top + rect.height / 2
-		);
+		var rect = covers._boundingClientRect;
+		var element = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
 		if (!element) return;
-		var li = element.closest('li');
+		var li = element.closest("li");
 		if (!li) return;
-		if (li.classList.contains('Q_coverflow_sorting_placeholder')) return;
+		if (li.classList.contains("Q_coverflow_sorting_placeholder")) return;
 
-		var title = li.getAttribute('title');
+		var title = li.getAttribute("title");
 		if (title) {
 			caption.innerText = title;
-			caption.style.display = 'block';
+			caption.style.display = "block";
 		} else {
-			caption.style.display = 'none';
+			caption.style.display = "none";
 		}
-		$(caption).plugin('Q/textfill', 'refresh');
+		$(caption).plugin("Q/textfill", "refresh");
 	}, 50);
 
 	tool._updateCaption = updateCaption;
@@ -150,13 +167,13 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 	// Skips placeholder items (flat by CSS).
 
 	var updateCovers = Q.throttle(function () {
-		var rect = covers.getBoundingClientRect();
+		var rect = covers._boundingClientRect;
 		var cx = rect.left + rect.width / 2;
 
-		var items = covers.querySelectorAll('li');
+		var items = covers.querySelectorAll("li");
 		for (var i = 0; i < items.length; i++) {
 			var li = items[i];
-			if (li.classList.contains('Q_coverflow_sorting_placeholder')) continue;
+			if (li.classList.contains("Q_coverflow_sorting_placeholder")) continue;
 
 			var r = li.getBoundingClientRect();
 			var itemCx = r.left + r.width / 2;
@@ -167,15 +184,14 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 			if (norm > 1) norm = 1;
 
 			var rotateY = norm * 60;
-			var depth   = (1 - Math.abs(norm)) * 120;
-			var scale   = 1 + (1 - Math.abs(norm)) * 0.25;
+			var depth = (1 - Math.abs(norm)) * 120;
+			var scale = 1 + (1 - Math.abs(norm)) * 0.25;
 
-			var img = li.querySelector('img, video');
+			var img = li.querySelector("img, video");
 			if (!img) continue;
 
 			img.style.transform =
-				'perspective(900px) translateZ(' + depth + 'px) ' +
-				'rotateY(' + rotateY + 'deg) scale(' + scale + ')';
+				"perspective(900px) translateZ(" + depth + "px) " + "rotateY(" + rotateY + "deg) scale(" + scale + ")";
 
 			li.style.zIndex = Math.round(1000 * (1 - Math.abs(norm)));
 		}
@@ -183,11 +199,15 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 
 	tool._updateCovers = updateCovers;
 
-	covers.addEventListener('scroll', function () {
-		updateCaption();
-		updateCovers();
-		enableSnapSoon();
-	}, { passive: true });
+	covers.addEventListener(
+		"scroll",
+		function () {
+			updateCaption();
+			updateCovers();
+			enableSnapSoon();
+		},
+		{ passive: true }
+	);
 
 	// ---- pointer drag-to-scroll ----
 	// Yields to sortable once covers._sortableLifted is set.
@@ -225,27 +245,28 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 			enableSnapSoon();
 		});
 
-		slider.addEventListener("pointermove", function (e) {
-			if (slider._sortableLifted) {
-				if (isDown) {
-					isDown = false;
-					slider.classList.remove("active");
-					if (slider.releasePointerCapture) {
-						slider.releasePointerCapture(e.pointerId);
+		slider.addEventListener(
+			"pointermove",
+			function (e) {
+				if (slider._sortableLifted) {
+					if (isDown) {
+						isDown = false;
+						slider.classList.remove("active");
+						if (slider.releasePointerCapture) {
+							slider.releasePointerCapture(e.pointerId);
+						}
 					}
+					return;
 				}
-				return;
-			}
-			if (!isDown) return;
-			e.preventDefault();
+				if (!isDown) return;
+				e.preventDefault();
 
-			var dx = e.pageX - startX;
-			slider.scrollLeft = isRTL
-				? startScrollLeft + dx
-				: startScrollLeft - dx;
-		}, { passive: false });
+				var dx = e.pageX - startX;
+				slider.scrollLeft = isRTL ? startScrollLeft + dx : startScrollLeft - dx;
+			},
+			{ passive: false }
+		);
 	}
-
 },
 {
 	elements: [],
@@ -264,9 +285,10 @@ Q.Tool.define("Q/coverflow", function _Q_coverflow(options) {
 	_buildCovers: function () {
 		var tool = this;
 		var state = tool.state;
-		var covers = tool._covers
-			|| tool.element.querySelector('.Q_coverflow_covers');
-		if (!covers) return;
+		var covers = tool._covers || tool.element.querySelector('.Q_coverflow_covers');
+		if (!covers) {
+			return;
+		}
 
 		covers.innerHTML = '';
 		var titles = state.titles || [];
