@@ -19,6 +19,13 @@ module.exports = function (linked) {
 
 	this.typename = "Q.Tree";
 
+	/**
+	 * Loads data from JSON found in a file
+	 * @method load
+	 * @param {String} filename The filename of the file to load.
+	 * @param {Function} [callback] Takes (err, data)
+	 * @return {Q.Tree|null} Returns this if loaded, otherwise null.
+	 */
 	this.load = function (filename, callback) {
 		var that = this;
 		var filenames;
@@ -54,6 +61,15 @@ module.exports = function (linked) {
 		}
 	};
 
+	/**
+	 * Saves tree data to a file
+	 * @method save
+	 * @param {String} filename Name of file to save to. If tree was loaded, you can leave this blank to update that file.
+	 * @param {Array} [arrayPaty] Array of keys identifying the path of the subtree to save
+	 * @param {Array} [prefixPath] The JSON path to save the data under, defaults to array_path
+	 * @param {Function} [callback]
+	 * @return {Boolean} Returns true if saved, otherwise false;
+	 **/
 	this.save = function (filename, arrayPath, prefixPath, callback) {
 		if (!filename && typeof this.filename === 'string') filename = this.filename;
 		if (typeof arrayPath === 'function' || typeof arrayPath === 'undefined') {
@@ -74,8 +90,25 @@ module.exports = function (linked) {
 		});
 	};
 
-	this.getAll = function () { return linked; };
+	/**
+	 * Gets the object of all tree data
+	 * @method getAll
+	 * @return {Object}
+	 */
+	this.getAll = function () { 
+		return linked;
+	};
 
+	/**
+	 * Gets the value of a field, possibly deep inside the array
+	 * @method get
+	 * @param {Array} keys
+	 * @param {any} default
+	 *  If only one argument is passed, the default is null
+	 *  Otherwise, the last argument is the default value to return
+	 *  in case the requested field was not found.
+	 * @return {any}
+	 */
 	this.get = function (keys, def) {
 		if (typeof keys === 'undefined') keys = [];
 		if (typeof keys === 'string') {
@@ -97,6 +130,13 @@ module.exports = function (linked) {
 		return result;
 	};
 
+	/**
+	 * Sets the value of a tree item, possibly deep inside the object
+	 * @method set
+	 * @param {Array} keys
+	 * @param {any} [value=null] The value to set the field to.
+	 *  The last parameter should not be omitted unless the first parameter is an array.
+	 */
 	this.set = function (keys, value) {
 		if (arguments.length===1) {
 			linked = (typeof keys==="object") ? keys : [keys];
@@ -120,6 +160,11 @@ module.exports = function (linked) {
 		return this;
 	};
 
+	/**
+	 * Clears the value of a field, possibly deep inside the object
+	 * @method clear
+	 * @param {Array} keys
+	 */
 	this.clear = function (keys) {
 		if (!keys) { linked = {}; return; }
 		if (typeof keys==='string') keys = [keys];
@@ -133,15 +178,56 @@ module.exports = function (linked) {
 		return false;
 	};
 
+	/**
+	 * Traverse the tree depth-first and call the callback.
+	 *
+	 * Callback return value semantics:
+	 *
+	 *   - return false  : abort the entire traversal immediately
+	 *   - return true   : skip this node's children but continue with siblings
+	 *   - return other  : descend normally into children (if associative)
+	 *
+	 * The callback receives: ($path, $value, $array, $context)
+	 *
+	 * @method depthFirst
+	 * @param {Function} callback
+	 * @param {Object} [context=null]
+	 */
 	this.depthFirst = function(cb, ctx) {
 		_depthFirst.call(this,[],linked,cb,ctx);
 	};
+
+	/**
+	 * Traverse the tree breadth-first and call the callback.
+	 *
+	 * Callback return value semantics:
+	 *
+	 *   - return false  : abort the entire traversal immediately
+	 *   - return true   : skip this node's children but continue with siblings
+	 *   - return other  : descend normally into children (if associative)
+	 *
+	 * The callback receives: ($path, $value, $array, $context)
+	 *
+	 * @method breadthFirst
+	 * @param {Function} callback
+	 * @param {Object} [context=null]
+	 */
 	this.breadthFirst = function(cb, ctx) {
 		var rootCont = cb([], linked, linked, ctx);
 		if (rootCont === false || rootCont === true) return;
 		_breadthFirst.call(this, [], linked, cb, ctx);
 	};
 
+	/**
+	 * Calculates a diff between this tree and another tree.
+	 * Supports keyed diffs if you explicitly pass $keyField.
+	 *
+	 * @method diff
+	 * @param {Q.Tree} tree
+	 * @param {bool} [$skipUndefinedValues=false] Skip if the value is undefined in target
+	 * @param {string|null} $keyField If provided, diff arrays of objects by this field
+	 * @return {Q_Tree}
+	 */
 	this.diff = function(tree, skipUndefinedValues, keyField) {
 		var context = {
 			from: this,
@@ -185,7 +271,7 @@ module.exports = function (linked) {
 				// PHP: no keyField to use replace syntax
 				valueTo = { replace: valueTo };
 			}
-			// skipAddedKeys semantics
+			// skipUndefinedValues semantics
 			if (context.skipUndefinedValues) {
 				var lastKey  = path[path.length - 1];
 				var parentPath = path.slice(0, -1);

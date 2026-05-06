@@ -296,17 +296,17 @@ class Q_Tree
 	 *
 	 * @method diff
 	 * @param {Q_Tree} $tree
-	 * @param {bool} [$skipAddedKeys=false] Skip if the value is undefined in target
+	 * @param {bool} [$skipUndefinedValues=false] Skip if the value is undefined in target
 	 * @param {string|null} $keyField If provided, diff arrays of objects by this field
 	 * @return {Q_Tree}
 	 */
-	function diff($tree, $skipAddedKeys = false, $keyField = null)
+	function diff($tree, $skipUndefinedValues = false, $keyField = null)
 	{
 		$context = new StdClass();
 		$context->from = $this;
 		$context->to = $tree;
 		$context->diff = new Q_Tree();
-		$context->skipAddedKeys = $skipAddedKeys;
+		$context->skipUndefinedValues = $skipUndefinedValues;
 		$context->keyField = $keyField;
 		$this->depthFirst(array($this, '_diffTo'), $context);
 		$tree->depthFirst(array($tree, '_diffFrom'), $context);
@@ -348,8 +348,8 @@ class Q_Tree
 			$args2 = $path;
 			$args2[] = $valueTo;
 
-			// restore skipAddedKeys check
-			if ($context->skipAddedKeys) {
+			// restore skipUndefinedValues check
+			if ($context->skipUndefinedValues) {
 				$key = end($path);
 				$parentPath = array_slice($path, 0, -1);
 				$parent = $parentPath ? call_user_func_array(array($context->to, 'get'), array_merge($parentPath, array(null))) : $context->to->parameters;
@@ -569,7 +569,7 @@ class Q_Tree
 	}
 	
 	/**
-	 * Saves parameters to a file
+	 * Saves tree data to a file
 	 * @method save
 	 * @param {string} $filename Name of file to save to. If tree was loaded, you can leave this blank to update that file.
 	 * @param {array} [$array_path=array()] Array of keys identifying the path of the subtree to save
