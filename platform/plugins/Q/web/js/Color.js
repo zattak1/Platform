@@ -313,7 +313,8 @@ Q.Color.setWindowTheme = function (color, skipBodyElement) {
         }
         meta.setAttribute('content', color);
     }
-    if (!skipBodyElement) {
+    if (!skipBodyElement && Q.info.isMobile
+    && Q.info.browser && Q.info.browser.OS === 'ios') {
         document.body.style.backgroundColor = color;
     }
     return prevColor;
