@@ -445,7 +445,7 @@ class Q_Image
 	static function postNewImage($params)
 	{
 		// Normalize input params — allow nested 'icon' payload
-		if ($params) {
+		if (Q::ifset($params, 'icon', null)) {
 			$p = $params;
 		} else {
 			// Legacy flat request params are promoted to 'icon'
@@ -453,7 +453,7 @@ class Q_Image
 				'icon' => Q::take($_REQUEST, array(
 					'data', 'path', 'subpath', 'merge', 'crop', 'original'
 				)),
-				'save' => isset($_REQUEST['save']) ? $_REQUEST['save'] : null
+				'save' => Q::ifset($_REQUEST, 'save', null)
 			);
 		}
 
