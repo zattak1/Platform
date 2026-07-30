@@ -1,6 +1,6 @@
 [submodule "platform/plugins/Users"]
 	path = platform/plugins/Users
-	url = https://github.com/Qbix/Users
+	url = https://github.com/zattak1/Users.git
 [submodule "platform/plugins/Q/web/js/qrcode"]
 	path = platform/plugins/Q/web/js/qrcode
 	url = https://github.com/Qbix/Q-qrcode
@@ -21,16 +21,16 @@
 	url = https://github.com/Qbix/Audio
 [submodule "platform/plugins/Media"]
 	path = platform/plugins/Media
-	url = https://github.com/Qbix/Media
+	url = https://github.com/zattak1/Media.git
 [submodule "platform/plugins/Calendars"]
 	path = platform/plugins/Calendars
-	url = https://github.com/Qbix/Calendars
+	url = https://github.com/zattak1/Calendars.git
 [submodule "platform/plugins/Communities"]
 	path = platform/plugins/Communities
-	url = https://github.com/Qbix/Communities
+	url = https://github.com/zattak1/Communities.git
 [submodule "platform/plugins/Teaching"]
 	path = platform/plugins/Teaching
-	url = https://github.com/Qbix/Teaching
+	url = https://github.com/zattak1/Teaching.git
 [submodule "platform/plugins/Metrics"]
 	path = platform/plugins/Metrics
 	url = https://github.com/Qbix/Metrics
@@ -42,10 +42,10 @@
 	url = https://github.com/Qbix/Travel
 [submodule "platform/plugins/Websites"]
 	path = platform/plugins/Websites
-	url = https://github.com/Qbix/Websites
+	url = https://github.com/zattak1/Websites.git
 [submodule "platform/plugins/Assets"]
 	path = platform/plugins/Assets
-	url = https://github.com/Qbix/Assets
+	url = https://github.com/zattak1/Assets.git
 [submodule "platform/plugins/Telegram"]
 	path = platform/plugins/Telegram
 	url = https://github.com/Qbix/Telegram
@@ -57,10 +57,10 @@
 	url = https://github.com/Qbix/Q-datejs
 [submodule "platform/plugins/Streams"]
 	path = platform/plugins/Streams
-	url = https://github.com/Qbix/Streams
+	url = https://github.com/zattak1/Streams.git
 [submodule "platform/plugins/AI"]
 	path = platform/plugins/AI
-	url = https://github.com/Qbix/AI
+	url = https://github.com/zattak1/AI.git
 [submodule "platform/plugins/Twitter"]
 	path = platform/plugins/Twitter
 	url = https://github.com/Qbix/Twitter
