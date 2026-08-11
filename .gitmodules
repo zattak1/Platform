@@ -36,7 +36,7 @@
 	url = https://github.com/Qbix/Metrics
 [submodule "platform/plugins/Places"]
 	path = platform/plugins/Places
-	url = https://github.com/Qbix/Places
+	url = https://github.com/zattak1/Places.git
 [submodule "platform/plugins/Travel"]
 	path = platform/plugins/Travel
 	url = https://github.com/Qbix/Travel
