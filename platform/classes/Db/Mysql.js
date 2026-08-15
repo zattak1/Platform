@@ -13,6 +13,19 @@ var util = require('util');
  * @private
  */
 var connections = {};
+
+/**
+ * Remove a connection from the cache, if it is still the cached one for its
+ * key. Called when a connection errors fatally, so no future query reuses a
+ * dead handle.
+ * @method evictConnection
+ * @private
+ */
+function evictConnection(c) {
+	if (c && c.__qbixKey !== undefined && connections[c.__qbixKey] === c) {
+		delete connections[c.__qbixKey];
+	}
+}
 	
 /**
  * MySQL connection class
@@ -94,6 +107,16 @@ function Db_Mysql(connName, dsn) {
 				return del.call(this, err, sequence);
 			};
 		}
+		connection.__qbixKey = key;
+		// A fatal error leaves this handle permanently dead — mysql2 then fails
+		// every later command with "Can't add new command when connection is in
+		// closed state". Evict it from the cache so the next reallyConnect()
+		// builds a fresh connection instead of reusing the corpse forever.
+		connection.on('error', function (err) {
+			if (err && err.fatal) {
+				evictConnection(connection);
+			}
+		});
 		return connections[key] = connection;
 	}
 
@@ -120,6 +143,13 @@ function Db_Mysql(connName, dsn) {
 	dbm.reallyConnect = function(callback, shardName, modifications, dontReconnect) {
 	
 		function _setUpConnection() {
+			// Once per connection object, not once per Db_Mysql: reconnected
+			// or evicted-and-rebuilt connections need their own SET NAMES,
+			// time_zone and error listener too.
+			if (connection.__qbixSetUp) {
+				return;
+			}
+			connection.__qbixSetUp = true;
 			if (Q.Config.get(['Db', 'debug'], false)) {
 				connection._original_query = connection.query;
 				connection.query = function (sql) {
@@ -130,7 +160,15 @@ function Db_Mysql(connName, dsn) {
 					return connection._original_query.apply(connection, arguments);
 				};
 			}
-			dbm.on('error', _Db_Mysql_onConnectionError);
+			// Db/Query/Mysql.js emits query errors on dbm; attach that route
+			// only once per Db_Mysql or handlers would stack up on every
+			// reconnect.
+			if (!dbm.__qbixErrorHandlerAttached) {
+				dbm.__qbixErrorHandlerAttached = true;
+				dbm.on('error', function (err, mq) {
+					_Db_Mysql_onConnectionError(err, mq);
+				});
+			}
 			connection.on('error', _Db_Mysql_onConnectionError);
 			var mt = require('moment-timezone');
 			var timezone = Q.Config.expect(['Q', 'defaultTimezone']);
@@ -140,27 +178,54 @@ function Db_Mysql(connName, dsn) {
 				Math.abs(offset) * 60000 + new Date(2000, 0).getTime()
 		    ).toTimeString();
 		    var tz = (offset < 0 ? '-' : '+') + dt.substring(0,2) + ':' + dt.substring(3,5);
-			connection.query('SET NAMES UTF8; SET time_zone = "'+tz+'"');
+			// utf8mb4, not the utf8mb3 that "UTF8" still aliases in MySQL:
+			// this session reads and writes chat/stream content, and utf8mb3
+			// silently turns 4-byte characters such as emoji into "?".
+			connection.query('SET NAMES utf8mb4; SET time_zone = "'+tz+'"');
 
 			function _Db_Mysql_onConnectionError(err, mq) {
-				if (err.code === "PROTOCOL_CONNECTION_LOST" && !dontReconnect) {
-					connection = mysqlConnection(
-						info.host,
-						info.port || 3306,
-						info.username,
-						info.password,
-						info.dbname,
-						options,
-						true
-					);
-					connection.connect(function (err) {
-						if (err) {
-							throw new Q.Exception("Db.Mysql connection failed to reconnect to " + connection.config.database, 'mysql')
-							return;
-						}
-						Q.log("Db.Mysql reconnected to " + connection.config.database, 'mysql');
-					});
-					return _setUpConnection();
+				if (err && err.fatal) {
+					// The handle is dead for good (mysql2 sets fatal on
+					// connection loss AND on every "closed state" command that
+					// follows). Make sure no future query can reuse it.
+					evictConnection(connection);
+				}
+				if (err && err.fatal && !dontReconnect) {
+					// Reconnect at most once per second per Db_Mysql. Without
+					// the throttle, a down MySQL turns each failed attempt's
+					// own fatal error into the next attempt — a tight loop.
+					if (!dbm.__qbixReconnecting) {
+						dbm.__qbixReconnecting = true;
+						setTimeout(function () {
+							dbm.__qbixReconnecting = false;
+							connection = mysqlConnection(
+								info.host,
+								info.port || 3306,
+								info.username,
+								info.password,
+								info.dbname,
+								options,
+								true
+							);
+							connection.connect(function (err) {
+								if (err) {
+									// Never throw here: an uncaught exception
+									// in this callback crashes the process —
+									// the very outcome reconnecting exists to
+									// prevent. The failed handle is evicted,
+									// so the next query (or the next fatal
+									// error's throttled retry) builds a fresh
+									// connection once MySQL is back.
+									evictConnection(connection);
+									Q.log("Db.Mysql failed to reconnect to " + connection.config.database + ": " + err, 'mysql');
+									return;
+								}
+								Q.log("Db.Mysql reconnected to " + connection.config.database, 'mysql');
+							});
+							_setUpConnection();
+						}, 1000);
+					}
+					return;
 				}
 				Q.log("Db.Mysql error: " + err, 'mysql');
 				if (mq) {
@@ -205,10 +270,10 @@ function Db_Mysql(connName, dsn) {
 			info.dbname,
 			options
 		);
-		if (!dbm.connected) {
-			_setUpConnection();
-			dbm.connected = true;
-		}
+		// Per-connection, not per-dbm: a connection rebuilt after eviction
+		// still needs its SET NAMES, time_zone and error listener.
+		_setUpConnection();
+		dbm.connected = true;
 		callback && callback(connection);
 		return connection;
 	};
