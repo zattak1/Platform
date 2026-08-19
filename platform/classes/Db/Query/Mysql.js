@@ -11,6 +11,27 @@ var _valueCounter = 1;
 var _HASH_LEN = 7;
 
 /**
+ * Whether a query that just ERRORED might have left a transaction open on its
+ * connection: either it carried transaction clauses (begin()/commit()), or its
+ * raw SQL opens one inline (multi-statement batches like Streams.Message.post's
+ * "START TRANSACTION; ...; COMMIT;" — the driver stops at the first failing
+ * statement, so the trailing COMMIT never runs). Used to decide when the error
+ * path must issue a ROLLBACK. Over-matching is safe: ROLLBACK outside a
+ * transaction is a no-op.
+ * @method _mayHoldTransactionOpen
+ * @private
+ * @param {Db.Query.Mysql} query
+ * @param {String} sql The SQL that was actually sent
+ * @return {Boolean}
+ */
+function _mayHoldTransactionOpen(query, sql) {
+	if (query.clauses && (query.clauses['BEGIN'] || query.clauses['COMMIT'])) {
+		return true;
+	}
+	return /\bSTART\s+TRANSACTION\b/i.test(sql || '');
+}
+
+/**
  * Class implements MySQL query
  * @class Mysql
  * @namespace Db.Query
@@ -200,7 +221,37 @@ var Query_Mysql = function(mysql, type, clauses, parameters, table) {
 						if (!sql) return _doTheCallback();
 						var t = query, a = arguments;
 						if (!err && query.clauses['COMMIT']) {
-							connection.query('COMMIT;', _doTheCallback);
+							connection.query('COMMIT;', function (commitErr) {
+								if (!commitErr) {
+									return _doTheCallback();
+								}
+								// A failed COMMIT leaves the transaction open on
+								// this connection, which is shared by every
+								// request on this process — roll it back rather
+								// than letting it hold its locks forever.
+								connection.query('ROLLBACK;', _doTheCallback);
+							});
+						} else if (err && _mayHoldTransactionOpen(query, sql)) {
+							// The error path never committed, and nothing else
+							// ever will: this connection is a process-wide
+							// singleton (one per DSN, see Db/Mysql.js), so a
+							// transaction left open here silently blocks
+							// unrelated writes from every other request until
+							// someone restarts the node process — observed as
+							// 50s lock-wait timeouts on Streams/register while
+							// information_schema.innodb_trx showed a transaction
+							// hundreds of seconds old owned by this process.
+							//
+							// The multi-statement case is the dangerous one:
+							// Streams.Message.post sends one batch of
+							// "START TRANSACTION; ... FOR UPDATE; ...; COMMIT;",
+							// and the driver stops at the first failing
+							// statement, so the trailing COMMIT never runs.
+							// A ROLLBACK when no transaction is open is a no-op,
+							// so over-matching is safe and errors here are
+							// deliberately ignored: if the connection died, its
+							// transaction died with it.
+							connection.query('ROLLBACK;', _doTheCallback);
 						} else {
 							_doTheCallback();
 						}
