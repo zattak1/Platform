@@ -1290,6 +1290,7 @@ class Q_Session
 		$id = $seed
 			? hash('sha256', $seed) // length 64
 			: Q_Utils::randomHexString(64);
+		$prefix = Q_Config::expect('Q', 'session', 'id', 'prefixes', $prefixType);
 		$secret = Q_Config::get('Q', 'internal', 'secret', null);
 		if (isset($secret)) {
 			$id = substr($id, 0, 32);
@@ -1300,10 +1301,17 @@ class Q_Session
 				++$len;
 			}
 			$id = $time . substr($id, $len);
-			$sig = Q_Utils::signature($id, "$secret");
+			// Sign the prefix TOGETHER with the id. Signing the bare id let a
+			// client re-label a validly-signed id under any other prefix -- e.g.
+			// take its own "sessionId_..." and present it as
+			// "sessionId_internal_...", which isValidId() then accepted, making
+			// isInternal()/isAuthenticated() true and short-circuiting the nonce
+			// check. Binding the prefix into the signature makes the label part
+			// of what is authenticated (ro#297; upstream Qbix/Platform 0d3bcbd2,
+			// 06bd74a7).
+			$sig = Q_Utils::signature($prefix . $id, "$secret");
 			$id .= substr($sig, 0, 32);
 		}
-		$prefix = Q_Config::expect('Q', 'session', 'id', 'prefixes', $prefixType);
 		return $prefix . Q_Utils::hexToBase64($id);
 	}
 	
@@ -1314,17 +1322,21 @@ class Q_Session
 	 * @throws Q_Exception
 	 * @throws TypeError
 	*/
-	protected static function decodeId($id)
+	protected static function decodeId($id, $prefix = '')
 	{
 		$result = Q_Utils::base64ToHex($id);
 		$a = substr($result, 0, 32);
 		$b = substr($result, 32, 32);
 		$b = $b ? $b : ''; // for older PHP
 		$secret = Q_Config::get('Q', 'internal', 'secret', null);
-		$c = isset($secret)
-			? Q_Utils::hashEquals($b, substr(Q_Utils::signature($a, $secret), 0, 32))
-			: true;
-		return array($c, $a, $b);
+		if (!isset($secret)) {
+			return array(true, $a, $b);
+		}
+		// The signature must match the prefix this id was presented under, so a
+		// validly-signed id cannot be re-labelled under a different prefix
+		// (ro#297). $prefix is the one isValidId() stripped, or '' for none.
+		$expected = substr(Q_Utils::signature($prefix . $a, $secret), 0, 32);
+		return array(Q_Utils::hashEquals($b, $expected), $a, $b);
 	}
 
 	/**
@@ -1341,19 +1353,25 @@ class Q_Session
 		if (!$id) {
 			return false;
 		}
-		$parts = explode('_', $id);
-		if (count($parts) > 1) {
-			$id = end($parts);
-		} else {
-			$prefixes = Q_Config::get('Q', 'session', 'id', 'prefixes', array());
-			foreach ($prefixes as $prefix) {
-				if (Q::startsWith($id, $prefix)) {
-					$id = substr($id, strlen($prefix));
-					break;
-				}
+		// Strip the longest CONFIGURED prefix and remember which one it was, so
+		// decodeId() can require the signature to match that exact prefix. The
+		// old code split on "_" and accepted any leading text as a prefix while
+		// verifying a prefix-independent signature, which let a client re-label
+		// a validly-signed id under a privileged prefix (ro#297). Longest-match
+		// so "sessionId_internal_" wins over "sessionId_".
+		$prefixes = Q_Config::get('Q', 'session', 'id', 'prefixes', array());
+		usort($prefixes, function ($x, $y) {
+			return strlen($y) - strlen($x);
+		});
+		$matched = '';
+		foreach ($prefixes as $prefix) {
+			if ($prefix !== '' and Q::startsWith($id, $prefix)) {
+				$matched = $prefix;
+				$id = substr($id, strlen($prefix));
+				break;
 			}
 		}
-		$results = self::decodeId($id);
+		$results = self::decodeId($id, $matched);
 		return $results[0];
 	}
 
