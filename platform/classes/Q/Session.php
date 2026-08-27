@@ -1080,10 +1080,66 @@ class Q_Session
 	}
 	
 	/**
+	 * The configured "Q"/"internal"/"secret", or null if it is not usably set.
+	 *
+	 * Session ids and nonces are signed with this secret; it is the only thing
+	 * that distinguishes an id this server issued from one a client made up.
+	 * Everything that signs or verifies must therefore agree on what "not
+	 * configured" means, which is why that judgement lives in one place:
+	 *
+	 * - absent, or not a string
+	 * - empty, or whitespace only
+	 * - still holding the placeholder that local.sample/app.json ships
+	 *
+	 * The placeholder deserves particular care. It is a fixed string published
+	 * in every copy of this repository, so an install that keeps it is not
+	 * "configured with a weak secret" -- it is configured with a secret every
+	 * attacker already has, which is strictly worse than none, because it also
+	 * lets them SIGN. Treating it as unset routes it into the same hard failure.
+	 *
+	 * @method internalSecret
+	 * @static
+	 * @return {string|null}
+	 */
+	static function internalSecret()
+	{
+		$secret = Q_Config::get('Q', 'internal', 'secret', null);
+		if (!is_string($secret)) {
+			return null;
+		}
+		$secret = trim($secret);
+		if ($secret === '' or Q::startsWith($secret, 'TODO:')) {
+			return null;
+		}
+		return $secret;
+	}
+
+	/**
+	 * Same as internalSecret(), but throws instead of returning null, for the
+	 * code paths that must not proceed without a secret -- issuing a session id,
+	 * and computing a nonce.
+	 * @method requireInternalSecret
+	 * @static
+	 * @return {string}
+	 * @throws {Q_Exception_MissingConfig}
+	 */
+	static function requireInternalSecret()
+	{
+		$secret = self::internalSecret();
+		if ($secret === null) {
+			throw new Q_Exception_MissingConfig(array(
+				'fieldpath' => 'Q/internal/secret'
+			));
+		}
+		return $secret;
+	}
+
+	/**
 	 * Calculates a nonce from a session id.
 	 * @method calculateNonce
 	 * @param {string} [$sessionId] By default, uses current session id, if any
 	 * @return {string|null} the nonce, or null if no session is active
+	 * @throws {Q_Exception_MissingConfig} if "Q"/"internal"/"secret" is not set
 	 */
 	static function calculateNonce($sessionId = null)
 	{
@@ -1107,10 +1163,11 @@ class Q_Session
 				}
 			}
 		}
-		$secret = Q_Config::get('Q', 'internal', 'secret', null);
-		if (!isset($secret)) {
-			$secret = Q::app();
-		}
+		// This used to fall back to Q::app() when no secret was configured. The
+		// app name is public -- it is in the URL, the page source and the config
+		// -- so that fallback made every nonce computable by anyone, which is
+		// the one thing a nonce must not be. Refuse instead (ro#359).
+		$secret = self::requireInternalSecret();
 		return $longestPrefix . hash_hmac('sha256', $id, $secret);
 	}
 
@@ -1291,27 +1348,31 @@ class Q_Session
 			? hash('sha256', $seed) // length 64
 			: Q_Utils::randomHexString(64);
 		$prefix = Q_Config::expect('Q', 'session', 'id', 'prefixes', $prefixType);
-		$secret = Q_Config::get('Q', 'internal', 'secret', null);
-		if (isset($secret)) {
-			$id = substr($id, 0, 32);
-			$time = (string)time();
-			$len = strlen($time);
-			if ($len < 11) {
-				$time = '0' . $time;
-				++$len;
-			}
-			$id = $time . substr($id, $len);
-			// Sign the prefix TOGETHER with the id. Signing the bare id let a
-			// client re-label a validly-signed id under any other prefix -- e.g.
-			// take its own "sessionId_..." and present it as
-			// "sessionId_internal_...", which isValidId() then accepted, making
-			// isInternal()/isAuthenticated() true and short-circuiting the nonce
-			// check. Binding the prefix into the signature makes the label part
-			// of what is authenticated (ro#297; upstream Qbix/Platform 0d3bcbd2,
-			// 06bd74a7).
-			$sig = Q_Utils::signature($prefix . $id, "$secret");
-			$id .= substr($sig, 0, 32);
+		// No `if (isset($secret))` guard any more. Issuing an UNSIGNED id was the
+		// generating half of the fail-open pair below: unsigned ids are exactly
+		// the ids decodeId() had to wave through, and an id issued under
+		// "sessionId_internal_" with nothing binding it to this server is a
+		// credential anyone can mint. An app that cannot sign must not issue
+		// (ro#359).
+		$secret = self::requireInternalSecret();
+		$id = substr($id, 0, 32);
+		$time = (string)time();
+		$len = strlen($time);
+		if ($len < 11) {
+			$time = '0' . $time;
+			++$len;
 		}
+		$id = $time . substr($id, $len);
+		// Sign the prefix TOGETHER with the id. Signing the bare id let a
+		// client re-label a validly-signed id under any other prefix -- e.g.
+		// take its own "sessionId_..." and present it as
+		// "sessionId_internal_...", which isValidId() then accepted, making
+		// isInternal()/isAuthenticated() true and short-circuiting the nonce
+		// check. Binding the prefix into the signature makes the label part
+		// of what is authenticated (ro#297; upstream Qbix/Platform 0d3bcbd2,
+		// 06bd74a7).
+		$sig = Q_Utils::signature($prefix . $id, "$secret");
+		$id .= substr($sig, 0, 32);
 		return $prefix . Q_Utils::hexToBase64($id);
 	}
 	
@@ -1328,9 +1389,21 @@ class Q_Session
 		$a = substr($result, 0, 32);
 		$b = substr($result, 32, 32);
 		$b = $b ? $b : ''; // for older PHP
-		$secret = Q_Config::get('Q', 'internal', 'secret', null);
-		if (!isset($secret)) {
-			return array(true, $a, $b);
+		$secret = self::internalSecret();
+		if ($secret === null) {
+			// Fail CLOSED. This used to `return array(true, $a, $b)` -- i.e. with
+			// no secret configured, EVERY id validated, under every prefix, so a
+			// client could present "sessionId_internal_<anything>" and have
+			// isValidId() agree, which makes isInternal()/isAuthenticated() true.
+			// The security of the whole scheme rested on a config key nothing
+			// checked, and the failure was silent: a fresh app whose secret was
+			// never set came up green and served traffic.
+			//
+			// Rejecting rather than accepting cannot lock anyone out, because
+			// generateId() now refuses to issue an unsigned id in the same
+			// circumstance -- a misconfigured app fails loudly at the first
+			// request instead of quietly trusting its callers (ro#359).
+			return array(false, $a, $b);
 		}
 		// The signature must match the prefix this id was presented under, so a
 		// validly-signed id cannot be re-labelled under a different prefix
