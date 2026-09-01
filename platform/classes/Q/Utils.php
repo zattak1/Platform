@@ -334,14 +334,23 @@ class Q_Utils
 	 * @param {array|string} $data
 	 * @param {string} [$secret] A different secret to use for generating the signature
 	 * @return {string}
+	 * @throws {Q_Exception_MissingConfig} if no secret is passed and
+	 *  "Q"/"internal"/"secret" is not configured
 	 */
 	static function signature($data, $secret = null)
 	{
 		if (!isset($secret)) {
-			$secret = Q_Config::get('Q', 'internal', 'secret', null);
-		}
-		if (!isset($secret)) {
-			$secret = Q_Utils::generateLocalSecret();
+			// Fail LOUDLY. This used to fall back to generateLocalSecret() --
+			// a sha256 of gethostname(), php_uname(), PHP_OS, __FILE__ and
+			// /etc/machine-id. Every one of those is either public or
+			// identical across every container built from the same image, so
+			// it was a secret in name only, and callers could not tell they
+			// were signing with it. It also differs between the php-fpm host
+			// and the Node host, so PHP->Node internal signing silently never
+			// verified. Refusing to sign is what makes it safe for
+			// Q_Valid::signature() to reject on the verifying side (ro#453,
+			// same pairing as generateId()/decodeId() in ro#359).
+			$secret = Q_Session::requireInternalSecret();
 		}
 		if (is_array($data)) {
 			$data = self::serialize($data);
@@ -357,14 +366,15 @@ class Q_Utils
 	 * @param {array|string} [$fieldKeys] Path of the key under which to save signature
 	 * @param {string} [$secret] Can pass a different secret to use for generating the signature
 	 *  than the one found in Q/internal/secret config.}
-	 * @return {array} The data, with the signature added unless $secret is null
+	 * @return {array} The data, with the signature added
+	 * @throws {Q_Exception_MissingConfig} if no secret is passed and
+	 *  "Q"/"internal"/"secret" is not configured
 	 */
 	static function sign($data, $fieldKeys = null, $secret = null) {
 		if (!isset($secret)) {
-			$secret = Q_Config::get('Q', 'internal', 'secret', null);
-		}
-		if (!isset($secret)) {
-			$secret = Q_Utils::generateLocalSecret();
+			// See Q_Utils::signature() -- an app that cannot sign must not
+			// hand out a token that looks signed (ro#453).
+			$secret = Q_Session::requireInternalSecret();
 		}
 		if (!$fieldKeys) {
 			$sf = Q_Config::get('Q', 'internal', 'sigField', 'sig');
@@ -384,28 +394,6 @@ class Q_Utils
 		unset($ref[$ef]);
 		$ref[$ef] = Q_Utils::signature($data, $secret);
 		return $data;
-	}
-
-	/**
-	 * Generate a local secret that is stable but hard to guess from outside
-	 * @method generateLocalSecret
-	 * @static
-	 */
-	protected static function generateLocalSecret()
-	{
-		$parts = array(
-			gethostname(),
-			php_uname(),          // Includes kernel version etc.
-			PHP_OS,               // OS name
-			__FILE__,             // Path to this code on disk
-		);
-		$machineIdFile = '/etc/machine-id';
-		if (is_readable($machineIdFile)) {
-			$parts[] = trim(file_get_contents($machineIdFile));
-		}
-		// Create stable, local-only secret
-		$secret = hash('sha256', implode("\t", $parts));
-		return $secret;
 	}
 
 	/**
