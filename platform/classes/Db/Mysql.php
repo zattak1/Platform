@@ -343,7 +343,7 @@ class Db_Mysql implements Db_Interface
 		}
 		
 		$clauses = array(
-			'INTO' => "$table_into ($columnsString)",
+			'INTO' => Db_Query_Mysql::quotedTable($table_into)." ($columnsString)",
 			'VALUES' => $valuesString
 		);
 		
@@ -812,7 +812,7 @@ class Db_Mysql implements Db_Interface
 		if (empty($table))
 			throw new Exception("table not specified in call to 'update'.");
 		
-		$clauses = array('UPDATE' => "$table");
+		$clauses = array('UPDATE' => (string)Db_Query_Mysql::quotedTable($table));
 		return new Db_Query_Mysql($this, Db_Query::TYPE_UPDATE, $clauses, array(), $table);
 	}
 
@@ -833,9 +833,10 @@ class Db_Mysql implements Db_Interface
 		}
 
 		if (isset($table_using))
-			$clauses = array('FROM' => "$table_from USING $table_using");
+			$clauses = array('FROM' => Db_Query_Mysql::quotedTable($table_from)
+				." USING ".Db_Query_Mysql::quotedTable($table_using));
 		else
-			$clauses = array('FROM' => "$table_from");
+			$clauses = array('FROM' => (string)Db_Query_Mysql::quotedTable($table_from));
 		return new Db_Query_Mysql($this, Db_Query::TYPE_DELETE, $clauses, array(), $table_from);
 	}
 
@@ -1913,7 +1914,7 @@ EOT;
 			$class_name_base = Db::generateTableClassName($table_name_base);
 		}
 		$class_name = ucfirst($classname_prefix) . $class_name_base;
-		$table_cols = $this->rawQuery("SHOW FULL COLUMNS FROM $table_name")->execute()->fetchAll(PDO::FETCH_ASSOC);
+		$table_cols = $this->rawQuery("SHOW FULL COLUMNS FROM " . Db_Query_Mysql::quotedIfBare($table_name))->execute()->fetchAll(PDO::FETCH_ASSOC);
 		$table_status = $this->rawQuery("SHOW TABLE STATUS WHERE Name = '$table_name'")->execute()->fetchAll(PDO::FETCH_COLUMN, 17);
 		$table_comment = (!empty($table_status[0])) ? " * <br>{$table_status[0]}\n" : '';
 		
@@ -1932,7 +1933,7 @@ EOT;
 		$pk_json = json_encode($pk);
 
 		// Fetch index information
-		$index_rows = $this->rawQuery("SHOW INDEX FROM $table_name")
+		$index_rows = $this->rawQuery("SHOW INDEX FROM " . Db_Query_Mysql::quotedIfBare($table_name))
 			->execute()
 			->fetchAll(PDO::FETCH_ASSOC);
 

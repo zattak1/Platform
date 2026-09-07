@@ -358,9 +358,7 @@ class Db_Query_Mysql extends Db_Query implements Db_Query_Interface
 				$q = "DELETE $from$join$where$limit";
 				break;
 		}
-		foreach ($this->replacements as $k => $v) {
-			$q = str_replace($k, $v, $q);
-		}
+		$q = $this->applyReplacements($q);
 		return $q;
 	}
 
@@ -445,9 +443,7 @@ class Db_Query_Mysql extends Db_Query implements Db_Query_Interface
 				}
 			}
 		}
-		foreach ($this->replacements as $k => $v) {
-			$repres = str_replace($k, $v, $repres);
-		}
+		$repres = $this->applyReplacements($repres);
 		if (isset($callback)) {
 			$args = array($repres);
 			Q::call($callback, $args);
@@ -1106,6 +1102,7 @@ class Db_Query_Mysql extends Db_Query implements Db_Query_Interface
 							$this->parameters, $table->parameters
 						);
 					} else {
+						$table = self::quotedTable($table);
 						$table_string = is_int($alias) ? "$table" : "$table $as $alias";
 					}
 					if (!$repeat and in_array($table_string, $prev_tables_list)) {
@@ -1125,6 +1122,7 @@ class Db_Query_Mysql extends Db_Query implements Db_Query_Interface
 			if (! is_string($tables)) {
 				throw new Exception("The tables to select from need to be specified correctly.", -1);
 			}
+			$tables = self::quotedTable($tables);
 
 			if (empty($this->clauses['FROM'])) {
 				$this->clauses['FROM'] = $tables;
@@ -1195,6 +1193,7 @@ class Db_Query_Mysql extends Db_Query implements Db_Query_Interface
 			throw new Exception("The JOIN condition needs to be specified correctly.", -1);
 		}
 
+		$table = self::quotedTable($table);
 		$join = "$join_type JOIN $table ON ($condition)";
 
 		if (empty($this->clauses['JOIN'])) {
@@ -1914,6 +1913,113 @@ class Db_Query_Mysql extends Db_Query implements Db_Query_Interface
 		$args = empty($this->context['args']) ? array() : $this->context['args'];
 		$args[] = $this;
 		return call_user_func_array($callback, $args);
+	}
+
+	/**
+	 * MySQL uses backticks for quoting identifiers
+	 * @method quoted
+	 * @static
+	 * @param {string} $identifier
+	 * @return {string}
+	 */
+	static function quoted($identifier)
+	{
+		return "`" . str_replace('`', '``', $identifier) . "`";
+	}
+
+	/**
+	 * Backtick-quotes $expression if it is a bare identifier, and otherwise
+	 * returns it untouched. Used for database and table names, which may be
+	 * interpolated into SQL as anything from a bare name to "table AS alias",
+	 * a dotted or already-quoted expression, or a subquery -- only the bare
+	 * case is safe (and necessary) to quote.
+	 * @method quotedIfBare
+	 * @static
+	 * @param {string} $expression
+	 * @return {string}
+	 */
+	static function quotedIfBare($expression)
+	{
+		return preg_match('/^[A-Za-z0-9_$-]+$/', $expression)
+			? self::quoted($expression)
+			: $expression;
+	}
+
+	/**
+	 * Backtick-quotes a table reference of the form "name", "dbname.name" or
+	 * either of those followed by an alias, and returns anything else
+	 * untouched. Generated Base_* classes build their table reference as
+	 * $db->dbName().'.'.$table_name.$alias -- plain concatenation, so a
+	 * database name that is not a bare identifier (a hyphen, a reserved word)
+	 * produced invalid SQL until this quoted it (issue #521).
+	 *
+	 * Only the leading run of bare, dot-separated identifiers is quoted, and
+	 * only when the whole expression is one of those optionally followed by
+	 * whitespace and an alias. A subquery, a comma-separated list, an
+	 * already-backticked name or anything else with punctuation in it is
+	 * returned exactly as it came in -- including the "{{dbname}}.{{prefix}}x"
+	 * token form, which applyReplacements() quotes later instead.
+	 * @method quotedTable
+	 * @static
+	 * @param {string|Db_Expression} $expression
+	 * @return {string|Db_Expression}
+	 */
+	static function quotedTable($expression)
+	{
+		if (!is_string($expression)) {
+			return $expression;
+		}
+		if (!preg_match(
+			'/^([A-Za-z0-9_$-]+(?:\.[A-Za-z0-9_$-]+)*)(\s[\s\S]*)?$/',
+			$expression, $matches
+		)) {
+			return $expression;
+		}
+		$parts = explode('.', $matches[1]);
+		foreach ($parts as $i => $part) {
+			$parts[$i] = self::quoted($part);
+		}
+		return implode('.', $parts)
+			. (isset($matches[2]) ? $matches[2] : '');
+	}
+
+	/**
+	 * Substitutes {{dbname}}, {{prefix}} and the other replacements into
+	 * generated SQL. Table references produced by Db_Row subclasses have the
+	 * shape "{{dbname}}.{{prefix}}base", and both halves are bare identifiers,
+	 * so they are backtick-quoted here -- otherwise a database name that isn't
+	 * a bare identifier (a hyphen, a reserved word) breaks every query.
+	 * The values in $this->replacements are deliberately left unquoted, because
+	 * they are also compared against the table names the sharding code sends to
+	 * node.js.
+	 * @method applyReplacements
+	 * @protected
+	 * @param {string} $sql
+	 * @return {string}
+	 */
+	protected function applyReplacements($sql)
+	{
+		if (isset($this->replacements['{{dbname}}'])) {
+			$dbname = $this->replacements['{{dbname}}'];
+			if (isset($this->replacements['{{prefix}}'])) {
+				$prefix = $this->replacements['{{prefix}}'];
+				$sql = preg_replace_callback(
+					'/\{\{dbname\}\}\.\{\{prefix\}\}([A-Za-z0-9_$]+)/',
+					function ($m) use ($dbname, $prefix) {
+						return Db_Query_Mysql::quotedIfBare($dbname)
+							. '.' . Db_Query_Mysql::quotedIfBare($prefix.$m[1]);
+					},
+					$sql
+				);
+			}
+			$sql = str_replace(
+				'{{dbname}}.', self::quotedIfBare($dbname).'.', $sql
+			);
+		}
+		foreach ($this->replacements as $k => $v) {
+			$sql = str_replace($k, $v, $sql);
+		}
+		return $sql;
 	}
 
 	static function column($column)
