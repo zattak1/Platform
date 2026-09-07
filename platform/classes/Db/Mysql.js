@@ -92,6 +92,13 @@ function Db_Mysql(connName, dsn) {
 		var mysql2 = Q.Config.get(['Db', 'node', 'mysql2'], false);
 		if (mysql2) {
 			try {
+				// The absolute path here is load-bearing, not a style choice.
+				// mysql2 3.24 added an "exports" map to its package.json, so the
+				// bare specifier require('mysql2/lib/constants/encoding_charset')
+				// now throws ERR_PACKAGE_PATH_NOT_EXPORTED. Resolving the package
+				// directory first and requiring an absolute file path bypasses the
+				// exports map, which is why this internal reach survives the
+				// 3.0.0 -> ^3.23.1 bump. Verified against 3.24.3.
 				var path = Q.absoluteModulePath('mysql2');
 				var EncodingToCharset = require(path + '/lib/constants/encoding_charset');
 				EncodingToCharset.utf8mb3 = EncodingToCharset.utf8mb4;
