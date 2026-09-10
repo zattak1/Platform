@@ -229,6 +229,19 @@ var Query_Mysql = function(mysql, type, clauses, parameters, table) {
 								// this connection, which is shared by every
 								// request on this process — roll it back rather
 								// than letting it hold its locks forever.
+								//
+								// And it is a FAILED WRITE. `a` is what
+								// _doTheCallback forwards to the caller, and until
+								// ro#592 it was still the arguments the statement
+								// BEFORE the commit had succeeded with — so the
+								// caller was handed err=null and affectedRows=1
+								// for a change the ROLLBACK below had just undone,
+								// and acknowledged it as saved. Report the commit
+								// error instead, the way _queryConnection reports
+								// a failed statement.
+								commitErr.message += "\nQuery was:\n"+mq;
+								mq.db.emit('error', commitErr, mq);
+								a = [commitErr];
 								connection.query('ROLLBACK;', _doTheCallback);
 							});
 						} else if (err && _mayHoldTransactionOpen(query, sql)) {
