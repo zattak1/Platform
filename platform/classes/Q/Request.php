@@ -188,9 +188,7 @@ class Q_Request
 			// may have specified in the config field "Q"/"web"/"appRootUrl"
 			// then just query it via Q_Config::get().
 
-			self::$requested_without_port = (
-				strpos($_SERVER['HTTP_HOST'], ':') === false
-			);
+			self::$requested_without_port = !self::hostHasPort($_SERVER['HTTP_HOST']);
 			
 			// Infer things
 			self::$controller_url = self::inferControllerUrl($script_name);
@@ -306,10 +304,7 @@ class Q_Request
 				throw new Exception('Cannot infer host: neither HTTP_HOST nor SERVER_NAME is set');
 			}
 
-			$port = '';
-			if (isset($_SERVER['SERVER_PORT']) && !in_array($_SERVER['SERVER_PORT'], array(80, 443))) {
-				$port = ':' . $_SERVER['SERVER_PORT'];
-			}
+			$port = self::portSuffix($server_name);
 
 			$auth = '';
 			if (isset($_SERVER['PHP_AUTH_USER']) && $_SERVER['PHP_AUTH_USER'] !== '') {
@@ -1562,17 +1557,7 @@ class Q_Request
 		}
 
 		$https = self::isSecure(true);
-		$port = '';
-
-		if (!empty(self::$requested_without_port)) {
-			if (isset($_SERVER['SERVER_PORT']) && !in_array($_SERVER['SERVER_PORT'], array(80, 443))) {
-				$port = ':' . $_SERVER['SERVER_PORT'];
-			}
-		} else {
-			if (isset($_SERVER['SERVER_PORT'])) {
-				$port = ':' . $_SERVER['SERVER_PORT'];
-			}
-		}
+		$port = self::portSuffix($server_name);
 
 		$auth = '';
 		if (isset($_SERVER['PHP_AUTH_USER']) && $_SERVER['PHP_AUTH_USER'] !== '') {
@@ -1592,6 +1577,46 @@ class Q_Request
 		);
 	}
 	
+	/**
+	 * Whether a Host header value (or SERVER_NAME) already carries a port.
+	 * Bracketed IPv6 literals contain colons of their own, so "[::1]" has
+	 * no port while "[::1]:8443" does.
+	 * @method hostHasPort
+	 * @static
+	 * @protected
+	 * @param {string} $host
+	 * @return {boolean}
+	 */
+	protected static function hostHasPort($host)
+	{
+		if (substr($host, 0, 1) === '[') {
+			$end = strpos($host, ']');
+			return $end !== false && substr($host, $end + 1, 1) === ':';
+		}
+		return strpos($host, ':') !== false;
+	}
+
+	/**
+	 * The ":port" to append to $host when building a URL for this request.
+	 * Empty when $host already carries a port (the client's Host header is
+	 * authoritative, and appending SERVER_PORT would yield "host:8443:8443"),
+	 * and empty for SERVER_PORT 80 and 443, which are never written out.
+	 * @method portSuffix
+	 * @static
+	 * @protected
+	 * @param {string} $host
+	 * @return {string}
+	 */
+	protected static function portSuffix($host)
+	{
+		if (self::hostHasPort($host)
+		or !isset($_SERVER['SERVER_PORT'])
+		or in_array($_SERVER['SERVER_PORT'], array(80, 443))) {
+			return '';
+		}
+		return ':' . $_SERVER['SERVER_PORT'];
+	}
+
 	/**
 	 * Gets the app root url
 	 * @method getAppRootUrl
@@ -1624,17 +1649,7 @@ class Q_Request
 		}
 
 		$https = self::isSecure(true);
-		$port = '';
-
-		if (!empty(self::$requested_without_port)) {
-			if (isset($_SERVER['SERVER_PORT']) && !in_array($_SERVER['SERVER_PORT'], array(80, 443))) {
-				$port = ':' . $_SERVER['SERVER_PORT'];
-			}
-		} else {
-			if (isset($_SERVER['SERVER_PORT'])) {
-				$port = ':' . $_SERVER['SERVER_PORT'];
-			}
-		}
+		$port = self::portSuffix($server_name);
 
 		$auth = '';
 		if (isset($_SERVER['PHP_AUTH_USER']) && $_SERVER['PHP_AUTH_USER'] !== '') {
