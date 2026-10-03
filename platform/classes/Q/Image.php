@@ -1430,8 +1430,8 @@ class Q_Image
         }
         // A value with a scheme is a URL: never a stream wrapper such as
         // file:// or phar:// (is_file() would open those), and never a
-        // request get_headers() would send to a private target or follow
-        // through unchecked redirects (ro#1045).
+        // HEAD request sent to a private target or along unchecked
+        // redirects, as the stream-wrapper probe here used to (ro#1045).
         $isUrl = (bool)preg_match('#^[a-z][a-z0-9+.-]*:#i', $path);
 
         // ----------------------------
