@@ -1408,9 +1408,13 @@ class Q_Utils
 	 * all give "key"), and a field counts when a word is one of key, apikey,
 	 * token, secret, password, passwd, pass, passphrase, auth, authorization,
 	 * credential(s), sig, signature, hmac, jwt, bearer, session, sessionid or
-	 * cookie, or its whole name is listed in the Q/curl/credentialFields
-	 * config. Whole words, unlike the header check, because body fields are
-	 * many and freely named: "keywords" or "design" must not count.
+	 * cookie or pwd, or a word contains one of the stems secret, token (not
+	 * tokens), passw, apikey, privatekey, accesskey, hmac, jwt or credential
+	 * (apitoken, clientsecret, appsecret_proof: ro#1057), or its whole name
+	 * is listed in the Q/curl/credentialFields config. Words and a few long
+	 * stems, unlike the header check's short substrings, because body fields
+	 * are many and freely named: "keywords", "design", "passage" and
+	 * "max_tokens" must not count.
 	 * @method credentialFields
 	 * @static
 	 * @param {array|string} $data An array of fields, or a urlencoded or JSON string
@@ -1443,8 +1447,13 @@ class Q_Utils
 			'key', 'apikey', 'token', 'secret', 'password', 'passwd', 'pass',
 			'passphrase', 'auth', 'authorization', 'credential', 'credentials',
 			'sig', 'signature', 'hmac', 'jwt', 'bearer', 'session', 'sessionid',
-			'cookie'
+			'cookie', 'pwd'
 		);
+		// Inside one word, for names written without separators (apitoken,
+		// clientsecret, appsecret, privatekey): ro#1057. "token" not followed
+		// by "s", so the LLM body fields max_tokens / maxOutputTokens (counts,
+		// not credentials) do not stop redirects for every AI request.
+		$stems = '/secret|token(?!s)|passw|apikey|privatekey|accesskey|hmac|jwt|credential/';
 		$found = array();
 		$stack = array($data);
 		while ($stack) {
@@ -1461,7 +1470,8 @@ class Q_Utils
 				}
 				$split = preg_replace('/([a-z0-9])([A-Z])/', '$1 $2', $k);
 				$parts = preg_split('/[^a-z0-9]+/', strtolower($split), -1, PREG_SPLIT_NO_EMPTY);
-				if (array_intersect($parts, $words)) {
+				if (array_intersect($parts, $words)
+				|| preg_match($stems, implode(' ', $parts))) {
 					$found[] = $k;
 				}
 			}
