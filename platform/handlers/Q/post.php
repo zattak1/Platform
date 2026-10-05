@@ -23,9 +23,13 @@ function Q_post($params)
 			}
 		}
 	}
-	if (!Q_Session::$nonceWasSet) {
-		// only if we didn't set a new nonce (e.g. for a new session)
-		Q_Request::requireValidNonce();
+	// SECURITY: CSRF. Throws for a module/action on the Q/web/requireValidNonce
+	// include list when the request rides on a session cookie but lacks that
+	// session's nonce. This used to pass no $throwIfInvalid and discard the
+	// result, and sat behind Q_Session::$nonceWasSet, which the dispatcher sets
+	// on every web request -- so it checked nothing (ro#915).
+	if (Q_Session::nonceIsExpected()) {
+		Q_Request::requireValidNonce(true);
 	}
 	return Q::event("$module/$action/post", $params);
 }
