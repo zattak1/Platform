@@ -123,6 +123,45 @@ class Q_Session
 	}
 
 	/**
+	 * Whether the client making this request can be expected to send the
+	 * session's nonce (Q.nonce) with it. That is the case exactly when the
+	 * request identifies its session by the session cookie and that session is
+	 * still the current one: whoever was issued the session cookie was issued
+	 * the Q_nonce cookie derived from it in the same response, and the nonce is
+	 * deterministic in the session id (see calculateNonce()).
+	 *
+	 * It is false when the request carries no session cookie (a first visit,
+	 * a server-to-server call, or a cross-site POST, which a SameSite=Lax
+	 * cookie is not attached to) and when the session id changed earlier in
+	 * this request (a new session was generated for an invalid id, or a
+	 * handler regenerated it). Neither request can be a cross-site forgery
+	 * riding on a session cookie, which is the attack the nonce exists for.
+	 *
+	 * This replaces the Q_Session::$nonceWasSet test Q/post used for the same
+	 * purpose: Q_Dispatcher calls setNonce() before Q/reroute on every web
+	 * request (Q/session/startBefore), so $nonceWasSet was always true by the
+	 * time Q/post ran and the nonce was never checked there at all (ro#915).
+	 *
+	 * Starts the session if the request presented a session cookie and the
+	 * session has not been started yet, so that a configuration which starts
+	 * sessions later cannot make a cookie-authenticated request skip the check.
+	 * @method nonceIsExpected
+	 * @static
+	 * @return {boolean}
+	 */
+	static function nonceIsExpected()
+	{
+		$requested = self::requestedId();
+		if (!$requested) {
+			return false;
+		}
+		if (!self::id()) {
+			self::start();
+		}
+		return self::id() === $requested;
+	}
+
+	/**
 	 * The ID of the session that came with the request in $_COOKIE.
 	 * @param {boolean} [$fallbackToGet]
 	 * @param {boolean} [$fallbackToServerId]
