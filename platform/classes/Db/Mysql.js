@@ -4,6 +4,7 @@
 var Q = require('Q');
 var Db = Q.require('Db');
 var util = require('util');
+var crypto = require('crypto');
 
 /**
  * Cache of connections
@@ -441,7 +442,9 @@ function Db_Mysql(connName, dsn) {
 		function attempt() {
 			var id = prefix;
 			for (var i=0; i<length; ++i) {
-				id += characters[Math.floor(Math.random() * count)];
+				// CSPRNG: these ids include bearer credentials such as
+				// Streams_Invite tokens, so they must come from crypto (ro#732)
+				id += characters[crypto.randomInt(count)];
 			}
 			if (options.filter) {
 				var ret = Q.handle(options.filter, this, [id, table, field, where, options]);

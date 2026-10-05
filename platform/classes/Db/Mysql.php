@@ -1002,7 +1002,9 @@ class Db_Mysql implements Db_Interface
 		do {
 			$id = $prefix;
 			for ($i=0; $i<$length; ++$i) {
-				$id .= $characters[mt_rand(0, $count-1)];
+				// CSPRNG: these ids include bearer credentials such as
+				// Users_Intent tokens, so they must not come from mt_rand() (ro#732)
+				$id .= $characters[random_int(0, $count-1)];
 			}
 			if (!empty($options['filter'])) {
 				$p = array(@compact('id', 'table', 'field', 'where', 'options'));

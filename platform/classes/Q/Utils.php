@@ -45,11 +45,11 @@ class Q_Utils
 	{
 		$characters_len = strlen($characters);
 		$result = str_repeat(' ', $len);
+		// CSPRNG only. There is deliberately no fallback: random_int() exists on
+		// every PHP >= 7, and a weaker generator that nothing exercises is one a
+		// refactor can re-enable without any test noticing (ro#732).
 		for ($i=0; $i<$len; ++$i) {
-			$index = is_callable('random_int')
-				? random_int(0, $characters_len-1)
-				: mt_rand(0, $characters_len-1);
-			$result[$i] = $characters[$index];
+			$result[$i] = $characters[random_int(0, $characters_len-1)];
 		}
 		return $result;
 	}
@@ -63,17 +63,9 @@ class Q_Utils
 	 */
 	static function randomHexString($length)
 	{
-		if (is_callable('random_bytes')) {
-			$temp = bin2hex(random_bytes($length));
-		} else {
-			if (!Q_Config::get('Q', 'random', 'dontRandomize', false)) {
-				srand();
-			}
-			$temp = '';
-			for ($i=0; $i<$length; $i += 40) {
-				$temp .= sha1(mt_rand().microtime());
-			}
-		}
+		// CSPRNG only, no fallback (ro#732). Note the sha1() caps the result
+		// at 40 hex characters, as it always has.
+		$temp = bin2hex(random_bytes($length));
 		return substr(sha1($temp), 0, $length);
 	}
 
@@ -805,30 +797,8 @@ class Q_Utils
 	 * @return {string} A UUID, made up of 32 hex digits and 4 hyphens.
 	 */
 	static function uuid() {
-		
-		if (!self::$urand) {
-			self::$urand = @fopen ( '/dev/urandom', 'rb' );
-		}
-
-		$pr_bits = false;
-		if (is_callable('random_bytes')) {
-			$pr_bits .= random_bytes(16);
-		} elseif (is_resource ( self::$urand )) {
-			$pr_bits .= @fread ( self::$urand, 16 );
-		}
-		if (! $pr_bits) {
-			$fp = @fopen ( '/dev/urandom', 'rb' );
-			if ($fp !== false) {
-				$pr_bits .= @fread ( $fp, 16 );
-				@fclose ( $fp );
-			} else {
-				// If /dev/urandom isn't available (eg: in non-unix systems), use mt_rand().
-				$pr_bits = "";
-				for($cnt = 0; $cnt < 16; $cnt ++) {
-					$pr_bits .= chr ( mt_rand ( 0, 255 ) );
-				}
-			}
-		}
+		// CSPRNG only, no /dev/urandom or mt_rand() fallback chain (ro#732).
+		$pr_bits = random_bytes(16);
 		$time_low = bin2hex ( substr ( $pr_bits, 0, 4 ) );
 		$time_mid = bin2hex ( substr ( $pr_bits, 4, 2 ) );
 		$time_hi_and_version = bin2hex ( substr ( $pr_bits, 6, 2 ) );
@@ -3171,7 +3141,6 @@ class Q_Utils
 		return false;
 	}
 
-	protected static $urand;
 	protected static $sockets = array();
 	
 	public static $nodeUrlRouters = array();
