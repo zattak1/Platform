@@ -316,9 +316,18 @@ class Q_Valid
 		if ($missingIsValid and !isset($sn)) {
 			return true;
 		}
-		$gp = array_merge($_GET, $_POST);
-		$rn = Q_Request::special($snf, null, $gp);
-		if (!isset($sn) || ($rn !== $nonce2)) {
+		// Either copy may carry it. A form rendered with Q_Html::formInfo()
+		// holds the nonce of the session it was rendered in, and Q.ajaxExtend()
+		// adds the current one to the URL when script submits the form; after a
+		// session rotation the body's is stale and the URL's is right. This
+		// used to merge the two with the body winning, which refused the
+		// request (ro#915). Accepting either loses nothing: a forger can
+		// supply neither.
+		$rn = array(
+			Q_Request::special($snf, null, $_POST),
+			Q_Request::special($snf, null, $_GET)
+		);
+		if (!isset($sn) || !in_array($nonce2, $rn, true)) {
 			if (!$throwIfInvalid) {
 				return false;
 			}
