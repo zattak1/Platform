@@ -9706,6 +9706,13 @@ Q.ajaxExtend = function _Q_ajaxExtend(what, slotNames, options) {
 		return '';
 	}
 	options = options || {};
+	if (Q.nonce !== undefined) {
+		// The server re-sets the Q_nonce cookie on every response, and it
+		// changes whenever the session id does: a login or logout in another
+		// tab, or a rotation. A Q.nonce cached before that is stale, and
+		// Q/post, Q/put and Q/delete refuse a stale nonce (ro#915).
+		Q.nonce = Q.cookie('Q_nonce') || Q.nonce;
+	}
 	var slotNames2 = (typeof slotNames === 'string')
 		? slotNames 
 		: Q.extend([], slotNames).join(',');
