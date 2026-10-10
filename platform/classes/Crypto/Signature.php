@@ -59,9 +59,8 @@ class Signature {
 
         if(null == $nonce)
         {
-            $random     = openssl_random_pseudo_bytes(256, $cStrong);
-            $random     = $random . microtime(true).rand(100000000000, 1000000000000);
-            $nonce      = gmp_strval(gmp_mod(gmp_init(hash('sha256',$random), 16), $n), 16);
+            // random_bytes(), not openssl bytes + microtime() + rand() (ro#1078).
+            $nonce      = gmp_strval(gmp_mod(gmp_init(bin2hex(random_bytes(32)), 16), $n), 16);
         }
 
         //first part of the signature (R).

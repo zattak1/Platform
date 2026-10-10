@@ -118,8 +118,9 @@ require_once(Q_CLASSES_DIR.DS.'Q'.DS.'Uri.php');
 require_once(Q_CLASSES_DIR.DS.'Db.php');
 require_once(Q_CLASSES_DIR.DS.'Db'.DS.'Expression.php');
 require_once(Q_CLASSES_DIR.DS.'Db'.DS.'Query.php');
-require_once(Q_CLASSES_DIR.DS.'PasswordCompat'.DS.'password.php');
-require_once(Q_CLASSES_DIR.DS.'RandomCompat'.DS.'random.php');
+// PasswordCompat and RandomCompat (PHP 5 polyfills) are gone: PHP >= 7 has
+// password_*() and random_*() natively, and their dead fallbacks reached
+// mt_rand() and mcrypt (ro#1078).
 
 //
 // Set things up

@@ -371,9 +371,6 @@
 				}
 			}
 		},
-		"random": {
-			"dontRandomize": false
-		},
 		"urls": {
 			"ignore": ["Q/urls", "Q/uploads"],
 			"normalizeLastEmptySegment": "_root"
