@@ -273,6 +273,138 @@ function _rejectUnauthorized(host, target) {
 }
 
 /**
+ * Methods whose redirects are never followed. This is the set the `request`
+ * package (2.x) refused to follow by default, kept so that a POST answered
+ * with a 3xx still resolves with the 3xx body rather than being re-sent.
+ * @property _NO_FOLLOW
+ * @private
+ */
+var _NO_FOLLOW = { PATCH: true, PUT: true, POST: true, DELETE: true };
+
+/**
+ * The most redirects one call follows, as in `request` 2.x.
+ * @property _MAX_REDIRECTS
+ * @private
+ */
+var _MAX_REDIRECTS = 10;
+
+/**
+ * Sends one HTTP(S) request with Node's own http/https modules and collects
+ * the body as a UTF-8 string. This replaced the `request` package, deprecated
+ * since 2020 and never patched for CVE-2023-28155 (ro#748). It deliberately
+ * reproduces what `request` did for the calls in this file, so that callers
+ * see no difference:
+ *
+ *  - the URL is split with the legacy `url.parse`, as `request` did, so the
+ *    connected host, port and path are byte-for-byte what they were;
+ *  - no body is written (the callers put their data in the query string), and
+ *    no timeout is set -- `request` set none and neither do the callers;
+ *  - redirects are followed for every method except PATCH/PUT/POST/DELETE, up
+ *    to 10, dropping Host/Content-Type/Content-Length, dropping Authorization
+ *    when the hostname changes, and adding Referer;
+ *  - connection errors reach the callback as errors; every HTTP status reaches
+ *    it as a response, and the caller decides what counts as a failure.
+ *
+ * Two differences are deliberate, and both are the point of the change:
+ *
+ *  - a redirect that changes protocol (http <-> https) fails with an error
+ *    instead of being followed. That is CVE-2023-28155 itself;
+ *  - a redirect hop to a different host has its TLS verification decided for
+ *    that host (Q/node/tls/insecureHosts), where `request` kept the first
+ *    host's decision for every hop, so a listed host could hand the call on to
+ *    an unlisted one with verification still off.
+ *
+ * @method _send
+ * @private
+ * @param {string} method  HTTP method, any case
+ * @param {string} href  Absolute http(s) URL, query string included
+ * @param {object} [headers]  Request headers; Node adds Host when absent
+ * @param {boolean} rejectUnauthorized  TLS verification for the first hop
+ * @param {function} callback  callback(err, res, body), called exactly once
+ */
+function _send(method, href, headers, rejectUnauthorized, callback) {
+	var urlModule = require('url');
+	method = String(method).toUpperCase();
+	if (method === 'DEL') method = 'DELETE'; // request.del was an alias
+	var redirects = 0;
+	var done = false;
+	function finish(err, res, body) {
+		if (done) return;
+		done = true;
+		callback(err, res, body);
+	}
+	function hop(href, headers, rejectUnauthorized) {
+		var parts = urlModule.parse(href);
+		if (parts.protocol !== 'http:' && parts.protocol !== 'https:') {
+			return finish(new Error('Invalid protocol: ' + parts.protocol));
+		}
+		var lib = require(parts.protocol === 'https:' ? 'https' : 'http');
+		var req;
+		try {
+			req = lib.request({
+				method: method,
+				hostname: parts.hostname,
+				port: parts.port,
+				path: parts.path,
+				headers: headers || {},
+				rejectUnauthorized: rejectUnauthorized,
+				agent: false // one connection per call, like request's private agent
+			}, function (res) {
+				var location = res.headers.location;
+				if (location && res.statusCode >= 300 && res.statusCode < 400
+				&& !_NO_FOLLOW[method]) {
+					res.resume(); // the body of a redirect is never useful
+					if (redirects >= _MAX_REDIRECTS) {
+						return finish(new Error(
+							'Exceeded maxRedirects. Probably stuck in a redirect loop ' + href
+						));
+					}
+					++redirects;
+					var next = urlModule.resolve(href, location);
+					var nextParts = urlModule.parse(next);
+					if (nextParts.protocol !== parts.protocol) {
+						// CVE-2023-28155: request followed this, so a URL that
+						// passed a caller's check could be bounced across
+						// protocols to somewhere else entirely.
+						return finish(new Error(
+							'Refusing a redirect that changes protocol, from '
+							+ parts.protocol + ' to ' + nextParts.protocol
+						));
+					}
+					var nextHeaders = {};
+					for (var k in headers) {
+						var lk = k.toLowerCase();
+						if (lk === 'host' || lk === 'content-type'
+						|| lk === 'content-length' || lk === 'referer') continue;
+						if (lk === 'authorization'
+						&& nextParts.hostname !== parts.hostname) continue;
+						nextHeaders[k] = headers[k];
+					}
+					nextHeaders.referer = href;
+					var nextReject = (nextParts.hostname === parts.hostname)
+						? rejectUnauthorized
+						: _rejectUnauthorized(nextParts.host);
+					return hop(next, nextHeaders, nextReject);
+				}
+				var chunks = [];
+				res.on('data', function (chunk) { chunks.push(chunk); });
+				res.on('error', function (err) { finish(err); });
+				res.on('end', function () {
+					finish(null, res, Buffer.concat(chunks).toString('utf8'));
+				});
+			});
+		} catch (e) {
+			// e.g. an invalid header value. request threw these from inside
+			// the caller's Promise executor, so they arrived as rejections.
+			return finish(e);
+		}
+		req.on('error', function (err) { finish(err); });
+		req.end();
+	}
+	hop(href, headers, rejectUnauthorized);
+}
+
+/**
  * Issues an HTTP request and returns a Promise.
  * If a callback is provided, it is called on completion and the Promise is also returned.
  *
@@ -338,14 +470,9 @@ function _request(method, uri, data, userAgent, header, callback) {
 	// `ip` and only sends `host` in the Host header -- over https that presents
 	// the IP to the TLS layer, so such a call needs the IP listed (or should
 	// not be used with https at all).
-	var requestOpts = {
-		headers: header,
-		uri: server + "?" + data,
-		agentOptions: { rejectUnauthorized: _rejectUnauthorized(host, ip) }
-	};
-
 	var p = new Promise(function(resolve, reject) {
-		require('request')[method](requestOpts, function(err, res, body) {
+		_send(method, server + "?" + data, header, _rejectUnauthorized(host, ip),
+		function(err, res, body) {
 			if (err) return reject(err);
 			if (res.statusCode >= 400) return reject(new Error(body));
 			resolve(body);
@@ -593,13 +720,20 @@ Utils.sendToNode = function(data, url) {
 		if (!url) return false;
 	}
 
-	// Fire-and-forget: no callback, no Promise returned.
-	// The 'request' module handles the HTTP send in the background.
-	require('request').post({
-		headers: {
-			'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.9) Gecko/20071025 Firefox/2.0.0.9'
-		},
-		uri: url + "?" + http_build_query(Utils.sign(data))
+	// Fire-and-forget: no callback, no Promise returned; the send happens in
+	// the background and a failure is logged, nothing more. Under the
+	// `request` package a failure here (e.g. ECONNREFUSED from the internal
+	// listener) was an 'error' event with no listener -- an uncaught
+	// exception, which Q.exceptionHandler answers with process.exit(1), so one
+	// undeliverable notification took the whole node process down (ro#748).
+	// TLS verification stays on unconditionally here, as it was.
+	_send('POST', url + "?" + http_build_query(Utils.sign(data)), {
+		'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.9) Gecko/20071025 Firefox/2.0.0.9'
+	}, true, function (err) {
+		if (err) {
+			Q.log("Q.Utils.sendToNode: " + (err.message || err)
+				+ " (" + data['Q/method'] + ")");
+		}
 	});
 	return true;
 };
