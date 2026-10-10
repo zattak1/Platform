@@ -1,6 +1,6 @@
 <?php
 
-function Q_post($params)
+function Q_head($params)
 {
 	$uri = Q_Dispatcher::uri();
 	$module = $uri->module;
