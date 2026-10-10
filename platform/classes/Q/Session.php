@@ -123,19 +123,46 @@ class Q_Session
 	}
 
 	/**
-	 * Whether the client making this request can be expected to send the
-	 * session's nonce (Q.nonce) with it. That is the case exactly when the
-	 * request identifies its session by the session cookie and that session is
-	 * still the current one: whoever was issued the session cookie was issued
-	 * the Q_nonce cookie derived from it in the same response, and the nonce is
-	 * deterministic in the session id (see calculateNonce()).
+	 * Whether the client making this request can be expected to send a nonce
+	 * (Q.nonce) with it. The decision rests on the provenance of the INBOUND
+	 * session cookie, not on what the session became during this request.
 	 *
-	 * It is false when the request carries no session cookie (a first visit,
-	 * a server-to-server call, or a cross-site POST, which a SameSite=Lax
-	 * cookie is not attached to) and when the session id changed earlier in
-	 * this request (a new session was generated for an invalid id, or a
-	 * handler regenerated it). Neither request can be a cross-site forgery
-	 * riding on a session cookie, which is the attack the nonce exists for.
+	 * It holds when the request's session cookie (Q_sessionId) carries an id
+	 * this server issued -- validly signed, see isValidId(). Whoever was issued
+	 * that cookie was issued the Q_nonce cookie derived from it alongside it
+	 * (the nonce is an HMAC of the id, see calculateNonce()), so a legitimate
+	 * client can always send that session's nonce. Q_Valid::nonce() accepts it
+	 * (requestedNonce()) as well as the current session's.
+	 *
+	 * It does NOT matter whether the id changed earlier in the request. That
+	 * used to be an exemption ("the client was never sent the new nonce, so it
+	 * cannot be a forgery"), and it was wrong (ro#915, audit R01): a startup
+	 * hook can raise the request's authority while rotating the id. The worked
+	 * case is a handoff login. Users_Intent::complete() writes
+	 * Users.switchToLoggedInUserId into an anonymous originating session; the
+	 * next request carrying that session's cookie -- possibly a cross-site
+	 * top-level GET with Q.method=POST, which the SameSite=Lax cookie IS sent
+	 * with -- runs Users/after/Q_session_start, which logs the user in via
+	 * Users::setLoggedInUser() and so Q_Session::regenerateId(). Exempting
+	 * "changed id" let that request write as the user without a nonce. The
+	 * same holds for any Q/objects or Q/reroute hook that logs in (a Streams
+	 * invite token) or switches sessions (preview mode).
+	 *
+	 * It is false, by design, when the request cannot be a forgery riding on a
+	 * session cookie:
+	 * - no session cookie: a first visit, a server-to-server call or webhook,
+	 *   or a cross-site POST, which a SameSite=Lax cookie is not attached to;
+	 * - a cookie whose id this server did not issue (unsigned, or signed under
+	 *   a different prefix): start() replaces it with a new session, so the
+	 *   request carries no authority it was issued, and the client holds no
+	 *   nonce for it;
+	 * - a validly signed internal id (Q/session/id/prefixes/internal): only
+	 *   server-side holders of the secret mint those, and Q_Valid::nonce()
+	 *   exempts internal sessions as well.
+	 *
+	 * As a fallback, an unsigned cookie id that is nonetheless the CURRENT
+	 * session's id (possible only when something set the id explicitly) is
+	 * still checked, which is the conservative answer.
 	 *
 	 * This replaces the Q_Session::$nonceWasSet test Q/post used for the same
 	 * purpose: Q_Dispatcher calls setNonce() before Q/reroute on every web
@@ -144,7 +171,7 @@ class Q_Session
 	 *
 	 * Starts the session if the request presented a session cookie and the
 	 * session has not been started yet, so that a configuration which starts
-	 * sessions later cannot make a cookie-authenticated request skip the check.
+	 * sessions later still runs the session's startup hooks before the handler.
 	 * @method nonceIsExpected
 	 * @static
 	 * @return {boolean}
@@ -158,7 +185,36 @@ class Q_Session
 		if (!self::id()) {
 			self::start();
 		}
+		if (self::isValidId($requested)) {
+			// SECURITY: CSRF. Expected even if a startup hook has since rotated
+			// the id: see the handoff case in the docblock (ro#915, audit R01).
+			$internalPrefix = Q_Config::get(
+				'Q', 'session', 'id', 'prefixes', 'internal', 'sessionId_internal_'
+			);
+			return !($internalPrefix and Q::startsWith($requested, $internalPrefix));
+		}
 		return self::id() === $requested;
+	}
+
+	/**
+	 * The nonce of the session named by the request's session cookie, if this
+	 * server issued that id (it is validly signed), else null. A legitimate
+	 * client holds this nonce even when a startup hook has rotated the session
+	 * earlier in the same request (a handoff login, see nonceIsExpected()),
+	 * so Q_Valid::nonce() accepts it alongside the current session's nonce.
+	 * Only the cookie counts, never $_GET: the cookie is what a cross-site
+	 * request rides on, and its nonce is what a cross-site page cannot read.
+	 * @method requestedNonce
+	 * @static
+	 * @return {string|null}
+	 */
+	static function requestedNonce()
+	{
+		$requested = self::requestedId();
+		if (!$requested or !self::isValidId($requested)) {
+			return null;
+		}
+		return self::calculateNonce($requested);
 	}
 
 	/**
