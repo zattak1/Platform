@@ -327,7 +327,24 @@ class Q_Valid
 			Q_Request::special($snf, null, $_POST),
 			Q_Request::special($snf, null, $_GET)
 		);
-		if (!isset($sn) || !in_array($nonce2, $rn, true)) {
+		// The session the request's cookie named may differ from the current
+		// one when a startup hook rotated it earlier in this request (a
+		// handoff login, Users/after/Q_session_start). The client legitimately
+		// holds only that inbound session's nonce, so accept it too; a forger
+		// can no more read it than the current one (ro#915, audit R01).
+		$accepted = array($nonce2);
+		$inbound = Q_Session::requestedNonce();
+		if ($inbound and $inbound !== $nonce2) {
+			$accepted[] = $inbound;
+		}
+		$matched = false;
+		foreach ($rn as $candidate) {
+			if (is_string($candidate) and in_array($candidate, $accepted, true)) {
+				$matched = true;
+				break;
+			}
+		}
+		if (!isset($sn) || !$matched) {
 			if (!$throwIfInvalid) {
 				return false;
 			}
